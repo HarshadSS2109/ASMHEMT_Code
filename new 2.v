@@ -411,7 +411,7 @@ module asmhemt(d, g1, g2, s1, s2, b1, b2, dt); //Hars
     electrical d, g1, g2, s1, s2, b1, b2; //Hars
     electrical trap1_1, trap2_1, trap1_2, trap2_2; //Hars
     electrical di, si_1, si_2, gi_1, gi_2, gin; //Hars
-    electrical n1, nt, n2, ntg; //Hars
+    electrical n1, nt, n2, ntg; //Hars_21.09
     thermal dt1; //Hars
 
 

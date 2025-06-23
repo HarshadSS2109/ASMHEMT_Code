@@ -238,6 +238,25 @@ end else begin \
     psid       = ef1 + Vdeff ; \
 end
 
+
+////// Function for Surface potential calculation
+
+`define Surface_potential(Tdev, Tnom, epsilon, delta, beta, ALPHAN, ALPHAD, Vtv, Cch, Cepi, u0, u0glag, ute, vsat, vsatglag, at, Cg, psis, Vg0, Vbs, ua, ub, uc, l, Vds, gamma0i, gamma1i, mulf_tdev, Vdeff, psid, Vdsx, w, nf, asl, kasl, nsl, knsl, bvdsl, kbvdsl, Vdsx_bv, kt1, voff_trap, voff_cap, mult_i, sigvds, gdsmin_t, di, si, Ids, isl) \
+	begin \
+		real u0_i = u0 - u0glag; \
+		real vsat_i = vsat - vsatglag; \
+		`PSID(Tdev, Tnom, epsilon, delta, beta, ALPHAN, ALPHAD, Vtv, Cch, Cepi, u0_i, ute, vsat_i, at, Cg, psis, Vg0, Vbs, ua, ub, uc, l, Vds, gamma0i, gamma1i, mulf_tdev, Vdeff, psid) \
+		real psim = 0.5 * (psis + psid); \
+		real psisd = psid - psis; \
+		`IDS(Vg0, psim, psisd, Cg, Cepi, l, Vdsx, w, nf, Vtv, mulf_tdev, Vdeff, Ids) \
+		real aslt = asl * (1.0 + kasl * ((Tdev / Tnom) - 1.0)); \
+		real nslt = nsl * (1.0 + knsl * ((Tdev / Tnom) - 1.0)); \
+		real bvdslt = bvdsl * (1.0 + kbvdsl * ((Tdev / Tnom) - 1.0)); \
+		`IDIO(aslt, nslt, 1.0, (Vdsx_bv - bvdslt), isl) \
+		I(di, si) <+ mult_i * sigvds * Ids + mult_i * gdsmin_t * V(di, si); \
+		I(d, s) <+ mult_i * sigvds * (w * nf * isl); \
+	end
+
 ////////// Function for IDS Calculation //////////
 `define IDS(Vg0,psim,psisd,Cg,Cepi,l,Vdsx,w,nf,Vtv,mulf_tdev,Vdeff,   Ids) \
 ids0   = (Vg0 - psim + Vtv)*(psisd); \
@@ -275,10 +294,11 @@ t1 = lexp((-bvdsl)/(nsl*Vth)); \
 isl = w*nf*asl*(t0 - t1);
 
 //////// Function for parameter calculation ////////////
-`define PCAL(vinp,vmax,pin,ptune, pout) \
+`define PCAL(vinp,vmax,pin,ptune, pout)   \  //Hars  used in the trap 
 t0 = vinp*vmax; \
 t1 = sqrt(vinp*vinp + vmax*vmax); \
-pout = abs(ptune*pin)*(t0/t1);
+pout = abs(ptune*pin)*(t0/t1);    \
+
 
 //////// Function for saturation effect modeling in non-linear access region resistance ////////
 `define isat(Ids,isatacc,ar, idseff) \
@@ -289,6 +309,20 @@ kvv2=kvv*2.0; \
 tmp=tmp+kvv*kvv; \
 tmp=sqrt(tmp-kvv2)+sqrt(tmp+kvv2); \
 idseff=kv*2.0/tmp;
+
+////////// Hars: Capacitance calculation
+`define DEVICE_MODEL_CALCS(Vdsx, cdscd, cdscd_trap, Tdev,voff, voffdlag, voffglag, eta0, eta0_trap, eta0_cap, vdscale,Tnom, gdsmin, tgdsmin, kt1, voff_trap, voff_cap, Vbs, asub, \
+                            Cg, Cepi, cdsc, Vtv, Voff_dibl, tempr, gdsmin_t, Voff_dibl_temp) \
+    Cg = epsilon / tbar; \
+    Cepi = epsilon / tepi; \
+    cdsc = 1.0 + nfactor + (cdscd + cdscd_trap) * Vdsx; \
+    Vtv = `KboQ * Tdev * cdsc; \
+    Voff_dibl = voff + voffdlag + voffglag - (eta0 + eta0_trap - eta0_cap) * \
+                (Vdsx * vdscale) / sqrt(Vdsx * Vdsx + vdscale * vdscale); \
+    tempr = Tdev / Tnom; \
+    gdsmin_t = gdsmin - tgdsmin * (tempr - 1.0); \
+    Voff_dibl_temp = Voff_dibl - (tempr - 1.0) * kt1 + voff_trap + voff_cap +(Cepi / (Cepi + Cg)) * asub * Vbs;
+
 
 //////// Function for diode current gatemod=3 ///////////////////////////////////////////////////
 
@@ -372,13 +406,13 @@ Model Schematic:
 
 */
 
-module asmhemt(d,g,s,b,dt);
-    inout d,g,s,b,dt;
-    electrical d,g,s,b;
-    electrical trap1, trap2;
-    electrical di, si, gi, gin;
-    electrical n1,nt,n2,ntg;
-    thermal dt;
+module asmhemt(d, g1, g2, s1, s2, b1, b2, dt); //Hars
+    inout d, g1, g2, s1, s2, b1, b2, dt; //Hars
+    electrical d, g1, g2, s1, s2, b1, b2; //Hars
+    electrical trap1_1, trap2_1, trap1_2, trap2_2; //Hars
+    electrical di, si_1, si_2, gi_1, gi_2, gin; //Hars
+    electrical n1, nt, n2, ntg; //Hars
+    thermal dt1; //Hars
 
 
 ////////// Node Conditioning For Field-plates //////////
@@ -867,7 +901,7 @@ module asmhemt(d,g,s,b,dt);
     analog begin
         begin : voltages
             real Tnom, Vth;
-            real Vg0, Vds, Vgdeff, Vgs, sigvds, Vds_noswap, Vgs_noswap, Vgd_noswap, Vbs, Vbs_noswap, Vbd_noswap;
+            real Vg0, Vds_1, Vds_2, Vgdeff, Vgs_1, Vgs_2, sigvds_1, sigvds_2, Vds_noswap_1, Vds_noswap_2, Vgs_noswap_1, Vgs_noswap_2, Vgd_noswap_1, Vgd_noswap_2, Vbs_1, Vbs_2, Vbs_noswap_1, Vbs_noswap_2, Vbd_noswap_1, Vbd_noswap_2;    //Hars
             real sigvdsfp1, Vds_noswapfp1, Vgs_noswapfp1, Vgd_noswapfp1;
             real sigvdsfp1s, Vds_noswapfp1s, Vgs_noswapfp1s, Vgd_noswapfp1s;
             real sigvdsfp2, Vds_noswapfp2, Vgs_noswapfp2, Vgd_noswapfp2;
@@ -881,11 +915,11 @@ module asmhemt(d,g,s,b,dt);
             real Cch, ef1, vgef1, vgef23g0, vgef23g1, tg0, tg1;
             real t4, vgefm13g0, vgefm13g1, t5ng0,t5dg0, t5ng1, t5dg1, t5, ef2, vgef2, vgef223g0, vgef223g1, tg02, tg12, t42, vgefm213g0, vgefm213g1;
             real t5ng02, t5dg02, t5ng12, t5dg12, t52, ef3, psis, vgod, vgodp, psid, psim, psisd, ids0;
-            real t0, t3, qd, qs, Vdsx, Vdsx_bv, gdpr, gspr, Rdrain, Rsource, cdsc;
+            real t0, t3, qd, qs, Vdsx_1, Vdsx_2, Vdsx_bv_1, Vdsx_2, gdpr, gspr, Rdrain, Rsource, cdsc;  //Hars
             real vdg, vdgeff, ct;
             real ALPHAN, ALPHAD, Hx, nsx, vgop, vgon, ndx, dvgon, dvgod ;
             real vgmin, vggmin ;
-            real qgint, qsov, qdov, qdsov, qdint, qsint, cgdvar, VdseffCV, cgdl_l;
+            real qgint_1, qgint_2, qsov, qdov, qdsov, qdint_1,qdint_2 , qsint_1, qsint_2, cgdvar, VdseffCV, cgdl_l;   //Hars
             real rsbias, rdbias, qsacc, isatacc, rd0, rs0 ;
             real vsataccs_t, ns0_t, rsc_t, rdc_t, u0accs_t, u0accd_t, cr, crm;
             real Rtrap, Rtrap_t, vcap, vgopacc;
@@ -916,6 +950,24 @@ module asmhemt(d,g,s,b,dt);
             real Idb, Isb, Vbdl, Vbsl;
             real nsb_t, ndb_t, vbisb_t, vbidb_t, isb_t, idb_t;
             real gdsmin_t;
+			
+			// Hars: Declarations for Trap Model variables
+			// Trap Mode 1
+			real vcap_1, vcap_2, voff_cap_1, voff_cap_2, rs_cap_1, rs_cap_2, rd_cap_1, rd_cap_2, eta0_cap_1, eta0_cap_2;
+			// Trap Mode 2
+			real vdgeff1_1, vdgeff1_2, voff_trap_1, voff_trap_2, ron_trap_1, ron_trap_2, cdscd_trap_1, cdscd_trap_2, eta0_trap_1, eta0_trap_2;
+			// Trap Mode 3
+			real vdg_1, vdg_2, t0_1, t0_2, t1_1, t1_2, t2_1, t2_2, vdgeff_1, vdgeff_2, ct_1, ct_2, Rtrap_1, Rtrap_2, Rtrap_t_1, Rtrap_t_2;
+			// Trap Mode 4
+			real Rnon_1, Rnon_2, Rnong_1, Rnong_2, vaux_1, vaux_2, vauxg_1, vauxg_2;
+			// Trap Mode 5
+			real phixn_1, phixn_2, phiyn_1, phiyn_2, en_1, en_2, en1_1, en1_2, vaux_tr1, vaux_tr2, vauy_tr1, vauy_tr2;
+			//Capacitance cal for MOSFET 1
+			real Cg_1, Cepi_1, cdsc_1, Vtv_1, Voff_dibl_1, gdsmin_t_1, Voff_dibl_temp_1;
+			// Capacitance calu for MOSFET2
+			real Cg_2, Cepi_2, cdsc_2, Vtv_2, Voff_dibl_2, gdsmin_t_2, Voff_dibl_temp_2;
+			 
+
 ////////// Variable initialization //////////
             t6 = 0.0; t8 = 0.0; Qdep = 0.0; qfr = 0.0; qfr2 = 0.0; qfr3 = 0.0;
             vcap = 1.0;
@@ -975,27 +1027,49 @@ module asmhemt(d,g,s,b,dt);
 ////////// Temperature Conversion From Celsius To Kelvin //////////
             Tnom = tnom + `P_CELSIUS0;
 
-////////// Terminal Voltage Conditioning //////////
-            Vds_noswap = V(di,si);
-            Vgs_noswap = V(gi,si);
-            Vgd_noswap = V(gi,di);
-            Vbs_noswap = V(b,si);
-            Vbd_noswap = V(b,di);
-            sigvds = 1.0;
-            if (Vds_noswap < 0.0) begin
-                sigvds = -1.0;
-                Vds = sigvds*Vds_noswap;
-                Vgs = Vgd_noswap;
-                Vbs = Vbd_noswap;
-            end else begin
-                Vds = Vds_noswap;
-                Vgs = Vgs_noswap;
-                Vbs = Vbs_noswap;
-            end
-            Vdsx = sqrt(Vds*Vds + 0.01) - 0.1;
-            Vdsx_bv = sqrt(V(d,s)*V(d,s) + 0.01) - 0.1;
-            Tdev = $temperature + Temp(rth) + dtemp;
+////////// Terminal Voltage Conditioning - MOSFET 1 ////////// //Hars
+            Vds_noswap_1 = V(di, si_1); //Hars
+            Vgs_noswap_1 = V(gi_1, si_1); //Hars
+            Vgd_noswap_1 = V(gi_1, di); //Hars
+            Vbs_noswap_1 = V(b1, si_1); //Hars
+            Vbd_noswap_1 = V(b1, di); //Hars
+            sigvds_1 = 1.0; //Hars
+            if (Vds_noswap_1 < 0.0) begin //Hars
+                sigvds_1 = -1.0; //Hars
+                Vds_1 = sigvds_1 * Vds_noswap_1; //Hars
+                Vgs_1 = Vgd_noswap_1; //Hars
+                Vbs_1 = Vbd_noswap_1; //Hars
+            end else begin //Hars
+                Vds_1 = Vds_noswap_1; //Hars
+                Vgs_1 = Vgs_noswap_1; //Hars
+                Vbs_1 = Vbs_noswap_1; //Hars
+            end //Hars
+            Vdsx_1 = sqrt(Vds_1 * Vds_1 + 0.01) - 0.1; //Hars
+            Vdsx_bv_1 = sqrt(V(d, s1) * V(d, s1) + 0.01) - 0.1; //Hars
+			
+////////// Terminal Voltage Conditioning - MOSFET 2 ////////// //Hars
+            Vds_noswap_2 = V(di, si_2); //Hars
+            Vgs_noswap_2 = V(gi_2, si_2); //Hars
+            Vgd_noswap_2 = V(gi_2, di); //Hars
+            Vbs_noswap_2 = V(b2, si_2); //Hars
+            Vbd_noswap_2 = V(b2, di); //Hars
+            sigvds_2 = 1.0; //Hars
+            if (Vds_noswap_2 < 0.0) begin //Hars
+                sigvds_2 = -1.0; //Hars
+                Vds_2 = sigvds_2 * Vds_noswap_2; //Hars
+                Vgs_2 = Vgd_noswap_2; //Hars
+                Vbs_2 = Vbd_noswap_2; //Hars
+            end else begin //Hars
+                Vds_2 = Vds_noswap_2; //Hars
+                Vgs_2 = Vgs_noswap_2; //Hars
+                Vbs_2 = Vbs_noswap_2; //Hars
+            end //Hars
+            Vdsx_2 = sqrt(Vds_2 * Vds_2 + 0.01) - 0.1; //Hars
+            Vdsx_bv_2 = sqrt(V(d, s2) * V(d, s2) + 0.01) - 0.1; //Hars
+			Tdev = $temperature + Temp(rth) + dtemp;
             Vth  = `KboQ * Tdev ;
+
+✅
 ////////// Trap Models //////////
             case (trapmod)
                 0:begin
@@ -1007,99 +1081,186 @@ module asmhemt(d,g,s,b,dt);
                     V(n2)  <+ 0.0;
                 end
                 1:begin
-                    V(trap2) <+ Vds*Vds;
-                    I(trap2,trap1) <+ idio*(lexp(V(trap2,trap1)/10.0) - 1.0);
-                    I(trap1) <+ cdlag*ddt(V(trap1));
-                    I(trap1) <+ V(trap1)/rdlag;
-                    vcap = V(trap1);
-                    vcap = smoothminx(vcap,Vth,deltax);
-                    voff_cap = atrapvoff + btrapvoff*lexp(-1.0/vcap);
-                    rs_cap = atraprs + btraprs*lexp(-1.0/vcap);
-                    rd_cap = atraprd + btraprd*lexp(-1.0/vcap);
-                    eta0_cap = atrapeta0 + btrapeta0*lexp(-1.0/vcap);
+				
+				//MOSFTE_1    //Hars
+                    V(trap2_1) <+ Vds_1 * Vds_1;
+					I(trap2_1, trap1_1) <+ idio * (lexp(V(trap2_1, trap1_1)/10.0) - 1.0);
+					I(trap1_1) <+ cdlag * ddt(V(trap1_1)) + V(trap1_1)/rdlag;
+					I(trap1_1) <+ V(trap1)/rdlag;
+					vcap_1 = smoothminx(V(trap1_1), Vth, deltax);
+					voff_cap_1 = atrapvoff + btrapvoff * lexp(-1.0 / vcap_1);
+					rs_cap_1 = atraprs + btraprs * lexp(-1.0 / vcap_1);
+					rd_cap_1 = atraprd + btraprd * lexp(-1.0 / vcap_1);
+					eta0_cap_1 = atrapeta0 + btrapeta0 * lexp(-1.0 / vcap_1);
+					
+					
+		        // MOSFET_2   //Hars
+					V(trap2_2) <+ Vds_2 * Vds_2;
+					I(trap2_2, trap1_2) <+ idio * (lexp(V(trap2_2, trap1_2)/10.0) - 1.0);
+					I(trap1_2) <+ cdlag * ddt(V(trap1_2)) + V(trap1_2)/rdlag;
+					vcap_2 = smoothminx(V(trap1_2), Vth, deltax);
+					voff_cap_2 = atrapvoff + btrapvoff * lexp(-1.0 / vcap_2);
+					rs_cap_2 = atraprs + btraprs * lexp(-1.0 / vcap_2);
+					rd_cap_2 = atraprd + btraprd * lexp(-1.0 / vcap_2);
+					eta0_cap_2 = atrapeta0 + btrapeta0 * lexp(-1.0 / vcap_2);
                     V(nt)  <+ 0.0;
                     V(ntg) <+ 0.0;
                     V(n1)  <+ 0.0;
                     V(n2)  <+ 0.0;
                 end
+				
+				
                 2:begin
-                    vdgeff1 = lexp(a1*(-V(g,s)));
+				
+				//MOSFET 1     //Hars
+                    vdgeff1_1 = lexp(a1 * (-V(g1, s1)));
                     I(trap1) <+ V(trap1)/rtrap1;
-                    I(trap1) <+ -1.0*vdgeff1;
-                    I(trap1) <+ ctrap1*ddt(V(trap1));
-                    I(trap2) <+ V(trap2)/rtrap2;
-                    I(trap2) <+ -1.0*V(d,s);
-                    I(trap2) <+ ctrap2*ddt(V(trap2));
-                    voff_trap = vofftr*V(trap2);
-                    ron_trap = -rontr1 * V(trap1)+rontr2 * V(trap2) + rontr3;
-                    cdscd_trap = cdscdtr*V(trap2);
-                    eta0_trap = eta0tr*V(trap2);
+                    I(trap1_1) <+ V(trap1_1)/rtrap1 - vdgeff1_1 + ctrap1 * ddt(V(trap1_1));
+					I(trap2_1) <+ V(trap2_1)/rtrap2 - V(d1, s1) + ctrap2 * ddt(V(trap2_1));
+					voff_trap_1 = vofftr * V(trap2_1);
+					ron_trap_1 = -rontr1 * V(trap1_1) + rontr2 * V(trap2_1) + rontr3;
+					cdscd_trap_1 = cdscdtr * V(trap2_1);
+					eta0_trap_1 = eta0tr * V(trap2_1);
+					
+					
+				//MOSFET_2   //Hars
+				
+					vdgeff1_2 = lexp(a1 * (-V(g2, s2)));
+					I(trap1_2) <+ V(trap1_2)/rtrap1 - vdgeff1_2 + ctrap1 * ddt(V(trap1_2));
+					I(trap2_2) <+ V(trap2_2)/rtrap2 - V(d2, s2) + ctrap2 * ddt(V(trap2_2));
+					voff_trap_2 = vofftr * V(trap2_2);
+					ron_trap_2 = -rontr1 * V(trap1_2) + rontr2 * V(trap2_2) + rontr3;
+					cdscd_trap_2 = cdscdtr * V(trap2_2);
+					eta0_trap_2 = eta0tr * V(trap2_2);
                     V(nt)  <+ 0.0;
                     V(ntg) <+ 0.0;
                     V(n1)  <+ 0.0;
                     V(n2)  <+ 0.0;
                 end
+				
+				
                 3:begin
-                    vdg = V(d,g);
-                    t1 = (vdlr1/(1.0 + vdg*wd))*vdg;
-                    t2 = vdlr2*(vdg - vtb);                                                   //vtb for break between two linear regions
-                    vdgeff = 0.5*(t1+t2 + sqrt((t1-t2)*(t1-t2) + 0.25*deltax*deltax));        //Max function for t1 or t2
-                    t0 = exp(-2.0*(V(g,s)-voff)/sct);
-                    ct = 1.0e-9 + (ctrap3 - 1.0e-9)*0.5*(1.0 + (1.0-t0)/(1.0+t0));
-                    I(trap1) <+ V(trap1)/rtrap3;
-                    I(trap1) <+ -1.0*vdgeff;
-                    I(trap1) <+ ct*ddt(V(trap1));
-                    Rtrap = V(trap1)/vatrap;
-                    Rtrap_t = Rtrap*pow((Tdev/Tnom),talpha);                                   //Temperature Dependence
-                    V(trap2) <+ 0.0;
+				
+				//MOSFET_1   //Hars
+					vdg_1 = V(d1, g1);
+					t1_1 = (vdlr1 / (1.0 + vdg_1 * wd)) * vdg_1;
+					t2_1 = vdlr2 * (vdg_1 - vtb);
+					vdgeff_1 = 0.5 * (t1_1 + t2_1 + sqrt((t1_1 - t2_1)**2 + 0.25 * deltax**2));
+					t0_1 = exp(-2.0 * (V(g1, s1) - voff) / sct);
+					ct_1 = 1.0e-9 + (ctrap3 - 1.0e-9) * 0.5 * (1.0 + (1.0 - t0_1)/(1.0 + t0_1));
+					I(trap1_1) <+ V(trap1_1)/rtrap3 - vdgeff_1 + ct_1 * ddt(V(trap1_1));
+					Rtrap_1 = V(trap1_1)/vatrap;
+					Rtrap_t_1 = Rtrap_1 * pow((Tdev/Tnom), talpha);
+					
+				//MOSFET_2     //Hars
+				
+					vdg_2 = V(d2, g2);
+					t1_2 = (vdlr1 / (1.0 + vdg_2 * wd)) * vdg_2;
+					t2_2 = vdlr2 * (vdg_2 - vtb);
+					vdgeff_2 = 0.5 * (t1_2 + t2_2 + sqrt((t1_2 - t2_2)**2 + 0.25 * deltax**2));
+					t0_2 = exp(-2.0 * (V(g2, s2) - voff) / sct);
+					ct_2 = 1.0e-9 + (ctrap3 - 1.0e-9) * 0.5 * (1.0 + (1.0 - t0_2)/(1.0 + t0_2));
+					I(trap1_2) <+ V(trap1_2)/rtrap3 - vdgeff_2 + ct_2 * ddt(V(trap1_2));
+					Rtrap_2 = V(trap1_2)/vatrap;
+					Rtrap_t_2 = Rtrap_2 * pow((Tdev/Tnom), talpha);	
+                    
                     V(nt)  <+ 0.0;
                     V(ntg) <+ 0.0;
                     V(n1)  <+ 0.0;
                     V(n2)  <+ 0.0;
                 end
+				
+				
                 4: begin
-                    V(trap1) <+ 0.0;
-                    V(trap2) <+ 0.0;
-                    t0 = abs(V(d,s));
-                    V(n1) <+ t0;
-                    Rnon = remi/(1 + arcap*exp(V(n1,nt)/brcap));
-                    I(n1,nt) <+ V(n1,nt)/Rnon ;
-                    I(nt)<+ cdlag*ddt(V(nt)) + 1.0e-12*V(nt);
-                    t1 = abs(V(g,s));
-                    V(n2) <+ t1;
-                    Rnong = remig/(1 + arcapg*exp(V(n2,ntg)/brcapg));
-                    I(n2,ntg) <+ V(n2,ntg)/Rnong ;
-                    I(ntg)<+ cglag*ddt(V(ntg)) + 1.0e-12*V(ntg);
-                    vaux = V(nt) - abs(V(d,s));
-                    vaux = smoothminx(vaux,0.0,1.0e-30);
-                    vauxg = V(ntg) - abs(V(g,s));
-                    vauxg = smoothminx(vauxg,0.0,1.0e-30);
-                    `PCAL(vaux,vdlmax,voff,dlvoff, voffdlag)
-                    `PCAL(vauxg,vglmax,voff,glvoff, voffglag)
-                    `PCAL(vauxg,vglmax,u0,glu0, u0glag)
-                    `PCAL(vauxg,vglmax,vsat,glvsat, vsatglag)
-                    `PCAL(vaux,vdlmax,ns0accs,dlns0s, ns0sdlag)
-                    `PCAL(vaux,vdlmax,ns0accd,dlns0d, ns0ddlag)
+				
+				//MOSFET_1    //Hars
+                    V(trap1_1) <+ 0.0;
+					V(trap2_1) <+ 0.0;
+					t0_1 = abs(V(d_1,s_1));
+					V(n1_1) <+ t0_1;
+					Rnon_1 = remi / (1 + arcap * exp(V(n1_1,nt_1)/brcap));
+					I(n1_1,nt_1) <+ V(n1_1,nt_1)/Rnon_1;
+					I(nt_1) <+ cdlag * ddt(V(nt_1)) + 1.0e-12 * V(nt_1);
+					t1_1 = abs(V(g_1,s_1));
+					V(n2_1) <+ t1_1;
+					Rnong_1 = remig / (1 + arcapg * exp(V(n2_1,ntg_1)/brcapg));
+					I(n2_1,ntg_1) <+ V(n2_1,ntg_1)/Rnong_1;
+					I(ntg_1) <+ cglag * ddt(V(ntg_1)) + 1.0e-12 * V(ntg_1);
+					vaux_1 = V(nt_1) - abs(V(d_1,s_1));
+					vaux_1 = smoothminx(vaux_1, 0.0, 1.0e-30);
+					vauxg_1 = V(ntg_1) - abs(V(g_1,s_1));
+					vauxg_1 = smoothminx(vauxg_1, 0.0, 1.0e-30);
+					`PCAL(vaux_1, vdlmax, voff, dlvoff, voffdlag)
+					`PCAL(vauxg_1, vglmax, voff, glvoff, voffglag)
+					`PCAL(vauxg_1, vglmax, u0, glu0, u0glag)
+					`PCAL(vauxg_1, vglmax, vsat, glvsat, vsatglag)
+					`PCAL(vaux_1, vdlmax, ns0accs, dlns0s, ns0sdlag)
+					`PCAL(vaux_1, vdlmax, ns0accd, dlns0d, ns0ddlag)
+					
+					
+				//MOSFET_2    //Hars
+				
+					V(trap1_2) <+ 0.0;
+					V(trap2_2) <+ 0.0;
+					t0_2 = abs(V(d_2,s_2));
+					V(n1_2) <+ t0_2;
+					Rnon_2 = remi / (1 + arcap * exp(V(n1_2,nt_2)/brcap));
+					I(n1_2,nt_2) <+ V(n1_2,nt_2)/Rnon_2;
+					I(nt_2) <+ cdlag * ddt(V(nt_2)) + 1.0e-12 * V(nt_2);
+					t1_2 = abs(V(g_2,s_2));
+					V(n2_2) <+ t1_2;
+					Rnong_2 = remig / (1 + arcapg * exp(V(n2_2,ntg_2)/brcapg));
+					I(n2_2,ntg_2) <+ V(n2_2,ntg_2)/Rnong_2;
+					I(ntg_2) <+ cglag * ddt(V(ntg_2)) + 1.0e-12 * V(ntg_2);
+					vaux_2 = V(nt_2) - abs(V(d_2,s_2));
+					vaux_2 = smoothminx(vaux_2, 0.0, 1.0e-30);
+					vauxg_2 = V(ntg_2) - abs(V(g_2,s_2));
+					vauxg_2 = smoothminx(vauxg_2, 0.0, 1.0e-30);
+					`PCAL(vaux_2, vdlmax, voff, dlvoff, voffdlag)
+					`PCAL(vauxg_2, vglmax, voff, glvoff, voffglag)
+					`PCAL(vauxg_2, vglmax, u0, glu0, u0glag)
+					`PCAL(vauxg_2, vglmax, vsat, glvsat, vsatglag)
+					`PCAL(vaux_2, vdlmax, ns0accs, dlns0s, ns0sdlag)
+					`PCAL(vaux_2, vdlmax, ns0accd, dlns0d, ns0ddlag)
                 end
                 5:begin
-                    phixn = ln(exp(alphax*V(g,s)+ alphaxd*V(g,d) + betax*abs(V(d,s))+gammax)+etax);
-                    en = eno*exp((ea/(`KboQ*Tdev)) - (ea/(`KboQ*Tnom)));
-                    I(trap1) <+ -cx*en*(vxmax-V(trap1))*(exp(2.0*phixn)-1)*0.5;
-                    I(trap1) <+ cx*en*V(trap1);
-                    I(trap1) <+ cx*ddt(V(trap1));
-                    phiyn = ln(exp(alphay*V(g,s)+ alphayd*V(g,d) + betay*abs(V(d,s))+gammay)+etay);
-                    en1 = eno1*exp((ea1/(`KboQ*Tdev)) - (ea1/(`KboQ*Tnom)));
-                    I(trap2) <+ -cy*en1*(vymax-V(trap2))*(exp(2.0*phiyn)-1)*0.5;
-                    I(trap2) <+ cy*en1*V(trap2);
-                    I(trap2) <+ cy*ddt(V(trap2));
-                    vaux = V(trap1);
-                    vauy = V(trap2);
+                   
+				//MOSFET_1 
+
+					phixn_1 = ln(exp(alphax*V(g_1,s_1) + alphaxd*V(g_1,d_1) + betax*abs(V(d_1,s_1)) + gammax) + etax);
+					en_1 = eno * exp((ea/(`KboQ*Tdev)) - (ea/(`KboQ*Tnom)));
+					I(trap1_1) <+ -cx * en_1 * (vxmax - V(trap1_1)) * (exp(2.0 * phixn_1) - 1) * 0.5;
+					I(trap1_1) <+ cx * en_1 * V(trap1_1);
+					I(trap1_1) <+ cx * ddt(V(trap1_1));
+					phiyn_1 = ln(exp(alphay*V(g_1,s_1) + alphayd*V(g_1,d_1) + betay*abs(V(d_1,s_1)) + gammay) + etay);
+					en1_1 = eno1 * exp((ea1/(`KboQ*Tdev)) - (ea1/(`KboQ*Tnom)));
+					I(trap2_1) <+ -cy * en1_1 * (vymax - V(trap2_1)) * (exp(2.0 * phiyn_1) - 1) * 0.5;
+					I(trap2_1) <+ cy * en1_1 * V(trap2_1);
+					I(trap2_1) <+ cy * ddt(V(trap2_1));
+                    vaux_tr1 = V(trap1);
+                    vauy_tr1 = V(trap2);
                     `PCAL(vaux,vdlmax,voff,dlvoff, voffdlag)
                     `PCAL(vaux,vdlmax,ns0accs,dlns0s, ns0sdlag)
                     `PCAL(vaux,vdlmax,ns0accd,dlns0d, ns0ddlag)
                     `PCAL(vauy,vglmax,voff,glvoff, voffglag)
                     `PCAL(vauy,vglmax,ns0accs,glns0s, ns0sglag)
                     `PCAL(vauy,vglmax,ns0accd,glns0d, ns0dglag)
+					
+					
+				//MOSFET2      //Hars
+				
+					phixn_2 = ln(exp(alphax*V(g_2,s_2) + alphaxd*V(g_2,d_2) + betax*abs(V(d_2,s_2)) + gammax) + etax);
+					en_2 = eno * exp((ea/(`KboQ*Tdev)) - (ea/(`KboQ*Tnom)));
+					I(trap1_2) <+ -cx * en_2 * (vxmax - V(trap1_2)) * (exp(2.0 * phixn_2) - 1) * 0.5;
+					I(trap1_2) <+ cx * en_2 * V(trap1_2);
+					I(trap1_2) <+ cx * ddt(V(trap1_2));
+					phiyn_2 = ln(exp(alphay*V(g_2,s_2) + alphayd*V(g_2,d_2) + betay*abs(V(d_2,s_2)) + gammay) + etay);
+					en1_2 = eno1 * exp((ea1/(`KboQ*Tdev)) - (ea1/(`KboQ*Tnom)));
+					I(trap2_2) <+ -cy * en1_2 * (vymax - V(trap2_2)) * (exp(2.0 * phiyn_2) - 1) * 0.5;
+					I(trap2_2) <+ cy * en1_2 * V(trap2_2);
+					I(trap2_2) <+ cy * ddt(V(trap2_2));
+					vaux_tr2 = V(trap1_2);
+					vauy_tr2 = V(trap2_2);
                     V(nt)  <+ 0.0;
                     V(ntg) <+ 0.0;
                     V(n1)  <+ 0.0;
@@ -1108,165 +1269,295 @@ module asmhemt(d,g,s,b,dt);
             endcase
 ////////// End of Trap Models //////////
 
-////////// Calculation For Physical Quantities Required In SP Calculation //////////
-            Cg = epsilon/tbar;
-            Cepi = epsilon/tepi;
-            cdsc = 1.0 + nfactor + (cdscd+cdscd_trap)*Vdsx; //Sub-threshold Slope
-            Vtv = `KboQ*Tdev*cdsc;
-            Voff_dibl = voff + voffdlag + voffglag - (eta0 + eta0_trap - eta0_cap)*(Vdsx*vdscale)/sqrt(Vdsx*Vdsx + vdscale*vdscale);
-            tempr = Tdev/Tnom ;
-            gdsmin_t = gdsmin - tgdsmin*(tempr - 1.0);
-            Voff_dibl_temp = Voff_dibl - (tempr - 1.0)*kt1 + voff_trap + voff_cap + (Cepi/(Cepi+Cg))*asub*Vbs;
+////////// Calculation For Physical Quantities Required In SP Calculation //////////		
+			`DEVICE_MODEL_CALCS(Vdsx_1, cdscd, cdscd_trap_1, Tdev,voff, voffdlag_1, voffglag_1, eta0, eta0_trap_1, eta0_cap_1, vdscale, Tnom, gdsmin, tgdsmin, kt1, voff_trap_1, voff_cap_1, Vbs_1, asub, \
+                    Cg_1, Cepi_1, cdsc_1, Vtv_1, Voff_dibl_1, tempr, gdsmin_t_1, Voff_dibl_temp_1)   //Hars
+					
+			`DEVICE_MODEL_CALCS(Vdsx_2, cdscd, cdscd_trap_2, Tdev, voff, voffdlag_2, voffglag_2, eta0, eta0_trap_2, eta0_cap_2, vdscale, Tnom, gdsmin, tgdsmin, kt1, voff_trap_2, voff_cap_2, Vbs_2, asub, \
+                    Cg_2, Cepi_2, cdsc_2, Vtv_2, Voff_dibl_2, tempr, gdsmin_t_2, Voff_dibl_temp_2)   //Hars
 
-////////// VGMin and VG0 Calculation //////////
-            `VG0(l,w,Voff_dibl_temp,imin,Vgs,Vtv,Vg0)
+////////// VGMin and VG0 Calculation //////////    //Hars
+			`VG0(l,w,Voff_dibl_temp_2,imin,Vgs_2,Vtv_2,Vg0)   //Hars
+			`VG0(l,w,Voff_dibl_temp_1,imin,Vgs_1,Vtv_1,Vg0)   //Hars
 
 ////////// Surface Potential Calculation Source Side //////////
-            `PSIS(Cg,Vg0,gamma0i,gamma1i,Vtv,  beta,ALPHAN,ALPHAD,Cch,psis)
+            `PSIS(Cg_1,Vg0,gamma0i,gamma1i,Vtv_1,  beta,ALPHAN,ALPHAD,Cch,psis)  //Hars
+			`PSIS(Cg_2,Vg0,gamma0i,gamma1i,Vtv_2,  beta,ALPHAN,ALPHAD,Cch,psis)  //Hars
 
 ////////// Surface Potential Drain Side //////////
-            u0_i = u0 - u0glag;
-            vsat_i = vsat - vsatglag;
-            `PSID(Tdev,Tnom,epsilon,delta,beta,ALPHAN,ALPHAD,Vtv,Cch,Cepi,u0_i,ute,vsat_i,at,Cg,psis,Vg0,Vbs,ua,ub,uc,l,Vds,gamma0i,gamma1i,   mulf_tdev,Vdeff,psid)
-            psim = 0.5*(psis + psid);
-            psisd = psid - psis ;
-            `IDS(Vg0,psim,psisd,Cg,Cepi,l,Vdsx,w,nf,Vtv,mulf_tdev,Vdeff,   Ids)
-            aslt = asl*(1.0 + kasl*(tempr - 1.0));
-            nslt = nsl*(1.0 + knsl*(tempr - 1.0));
-            bvdslt = bvdsl*(1.0 + kbvdsl*(tempr - 1.0));
-            `IDIO(aslt,nslt,1.0,(Vdsx_bv-bvdslt),  isl)
-            I(di,si) <+ mult_i*sigvds*(Ids) + mult_i*gdsmin_t*V(di,si);
-            I(d,s) <+ mult_i*sigvds*(w*nf*isl) ;
+			
+			`Surface_potential(Tdev, Tnom, epsilon, delta, beta, ALPHAN, ALPHAD, Vtv1, Cch, Cepi1, u01, u0glag1, ute, vsat1, vsatglag1, at, Cg1, psis1, 
+              Vg01, Vbs1, ua, ub, uc, l1, Vds1, gamma0i, gamma1i, mulf_tdev, Vdeff1, psid1, Vdsx1, w1, nf1, asl, kasl, nsl, knsl, bvdsl, kbvdsl, 
+              Vdsx_bv1, kt1, voff_trap1, voff_cap1, mult_i1, sigvds1, gdsmin_t1, di1, si1, Ids1, isl1)    //Hars
+			  
+			`Surface_potential(Tdev, Tnom, epsilon, delta, beta, ALPHAN, ALPHAD, Vtv2, Cch, Cepi2, u02, u0glag2, ute, vsat2, vsatglag2, at, Cg2, psis2, 
+              Vg02, Vbs2, ua, ub, uc, l2, Vds2, gamma0i, gamma1i, mulf_tdev, Vdeff2, psid2, Vdsx2, w2, nf2, asl, kasl, nsl, knsl, bvdsl, kbvdsl, 
+              Vdsx_bv2, kt1, voff_trap2, voff_cap2, mult_i2, sigvds2, gdsmin_t2, di2, si2, Ids2, isl2)   //Hars
+ 
 
 ////////// Terminal Charge Equations //////////
-            `QGI(Vg0,psis,psid,psim,Cg,l,qm0i,bdosi,adosi,tbar,Vtv,w,nf,   Cg_qme,qgint)
-            `QDI(Vg0,psim,psis,psid,psisd,l,Vtv,w,nf,Cg_qme,   qdint)
-            qsint = -1.0*qgint -1.0*qdint; //Source Charge
-            if (sigvds < 0.0) begin
-                t1 = qsint;
-                qsint = qdint;
-                qdint = t1;
+            `QGI(Vg0,psis,psid,psim,Cg_1,l,qm0i,bdosi,adosi,tbar,Vtv_1,w,nf,Cg_qme,qgint_1)     //Hars: MOSFET1
+			`QGI(Vg0,psis,psid,psim,Cg_2,l,qm0i,bdosi,adosi,tbar,Vtv_2,w,nf,Cg_qme,qgint_2)     //Hars: MOSFET2
+            `QDI(Vg0,psim,psis,psid,psisd,l,Vtv_1,w,nf,Cg_qme,qdint_1)        //Hars: MOSFET1
+			`QDI(Vg0,psim,psis,psid,psisd,l,Vtv_2,w,nf,Cg_qme,qdint_2)        //Hars: MOSFET2
+			
+			
+			////hars:   MOSFET 1    
+            qsint_1 = -1.0*qgint_1 -1.0*qdint_1; //Source Charge
+            if (sigvds_1 < 0.0) begin
+                t1_1 = qsint_1;
+                qsint_1 = qdint_1;
+                qdint_1 = t1_1;
+            end
+			///Hars:      MOSFET 2
+			qsint_2 = -1.0*qgint_2 -1.0*qdint_2; //Source Charge
+            if (sigvds_2 < 0.0) begin
+                t1_2 = qsint_2;
+                qsint_2 = qdint_2;
+                qdint_2 = t1_2;
             end
 
 ////////// Gate Current Model //////////
             case (gatemod)
                 0:begin
-                    Igs = 0.0; Igd = 0.0;
+                    
+					Igs_1 = 0.0; Igd_1 = 0.0;
+					Igs_2 = 0.0; Igd_2 = 0.0;
                 end
                 1:begin
-                    t0 = V(gi, si)/(njgs*`KboQ*Tdev);
-                    t3 = igsdio + (Tdev/Tnom - 1.0)* ktgs;
-                    Igs = w*l*nf*abs(t3)*(lexp(t0)-1.0);
-                    t0 = V(gi, di)/(njgd*`KboQ*Tdev);
-                    t3 = igddio + (Tdev/Tnom - 1.0)* ktgd;
-                    Igd = w*l*nf*abs(t3)*(lexp(t0)-1.0);
+                    //  MOSFET 1					
+					t0_1 = V(gi_1, si_1) / (njgs * `KboQ * Tdev);
+					t3_1 = igsdio + (Tdev / Tnom - 1.0) * ktgs;
+					Igs_1 = w * l * nf * abs(t3_1) * (lexp(t0_1) - 1.0);
+					t0_1 = V(gi_1, di_1) / (njgd * `KboQ * Tdev);
+					t3_1 = igddio + (Tdev / Tnom - 1.0) * ktgd;
+					Igd_1 = w * l * nf * abs(t3_1) * (lexp(t0_1) - 1.0);
+					
+					 // MOSFET 2
+					t0_2 = V(gi_2, si_2) / (njgs * `KboQ * Tdev);
+					t3_2 = igsdio + (Tdev / Tnom - 1.0) * ktgs;
+					Igs_2 = w * l * nf * abs(t3_2) * (lexp(t0_2) - 1.0);
+					t0_2 = V(gi_2, di_2) / (njgd * `KboQ * Tdev);
+					t3_2 = igddio + (Tdev / Tnom - 1.0) * ktgd;
+					Igd_2 = w * l * nf * abs(t3_2) * (lexp(t0_2) - 1.0);
+
                 end
                 2:begin
-                    vbis_t = vbis + (Tdev/Tnom-1)*ktvbis;
-                    njgs_t = njgs + (Tdev/Tnom-1)*ktnjgs;
-                    rnjgs_t = rnjgs + (Tdev/Tnom-1)*ktrnjgs;
-                    t0 = (V(gi, si)-vbis_t)/(njgs_t*`KboQ*Tnom);
-                    t3 = igsdio*exp(ktgs*(Tdev/Tnom-1));
-                    Igs = w*l*nf*abs(t3)*(lexp(t0)-1.0);
-                    mvgs = hypmax(-V(gi,si),0.0,0.001);
-                    efield = mvgs/tbar;
-                    t0 = (sqrt(mvgs) + ebreaks);
-                    t1 = t0/(rnjgs_t*`KboQ*Tnom);
-                    rigsdio_t = rigsdio*exp(rktgs*(Tdev/Tnom-1));
-                    Igs = Igs*(1.0 + efield*rigsdio_t*lexp(t1));
-                    vbid_t = vbid + (Tdev/Tnom-1)*ktvbid;
-                    njgd_t = njgd + (Tdev/Tnom-1)*ktnjgd;
-                    rnjgd_t = rnjgd + (Tdev/Tnom-1)*ktrnjgd;
-                    t0 = (V(gi, di)-vbid_t)/(njgd_t*`KboQ*Tnom);
-                    t3 = igddio*exp(ktgd*(Tdev/Tnom-1));
-                    Igd = w*l*nf*abs(t3)*(lexp(t0)-1.0);
-                    mvgd = hypmax(-V(gi,di),0.0,0.001);
-                    efield = mvgd/tbar;
-                    t0 = (sqrt(mvgd) + ebreakd);
-                    t0 = t0/(rnjgd_t*`KboQ*Tnom);
-                    rigddio_t = rigddio*exp(rktgd*(Tdev/Tnom-1));
-                    Igd = Igd*(1.0 + efield*rigddio_t*lexp(t0));
+                  	// MOSFET 1 
+					vbis_t_1 = vbis + (Tdev / Tnom - 1) * ktvbis;
+					njgs_t_1 = njgs + (Tdev / Tnom - 1) * ktnjgs;
+					rnjgs_t_1 = rnjgs + (Tdev / Tnom - 1) * ktrnjgs;
+					t0_1 = (V(gi_1, si_1) - vbis_t_1) / (njgs_t_1 * `KboQ * Tnom);
+					t3_1 = igsdio * exp(ktgs * (Tdev / Tnom - 1));
+					Igs_1 = w * l * nf * abs(t3_1) * (lexp(t0_1) - 1.0);
+					mvgs_1 = hypmax(-V(gi_1, si_1), 0.0, 0.001);
+					efield_1 = mvgs_1 / tbar;
+					t0_1 = sqrt(mvgs_1) + ebreaks;
+					t1_1 = t0_1 / (rnjgs_t_1 * `KboQ * Tnom);
+					rigsdio_t_1 = rigsdio * exp(rktgs * (Tdev / Tnom - 1));
+					Igs_1 = Igs_1 * (1.0 + efield_1 * rigsdio_t_1 * lexp(t1_1));
+					vbid_t_1 = vbid + (Tdev / Tnom - 1) * ktvbid;
+					njgd_t_1 = njgd + (Tdev / Tnom - 1) * ktnjgd;
+					rnjgd_t_1 = rnjgd + (Tdev / Tnom - 1) * ktrnjgd;
+					t0_1 = (V(gi_1, di_1) - vbid_t_1) / (njgd_t_1 * `KboQ * Tnom);
+					t3_1 = igddio * exp(ktgd * (Tdev / Tnom - 1));
+					Igd_1 = w * l * nf * abs(t3_1) * (lexp(t0_1) - 1.0);
+					mvgd_1 = hypmax(-V(gi_1, di_1), 0.0, 0.001);
+					efield_1 = mvgd_1 / tbar;
+					t0_1 = sqrt(mvgd_1) + ebreakd;
+					t0_1 = t0_1 / (rnjgd_t_1 * `KboQ * Tnom);
+					rigddio_t_1 = rigddio * exp(rktgd * (Tdev / Tnom - 1));
+					Igd_1 = Igd_1 * (1.0 + efield_1 * rigddio_t_1 * lexp(t0_1));
+					
+					 // MOSFET 2
+					vbis_t_2 = vbis + (Tdev / Tnom - 1) * ktvbis;
+					njgs_t_2 = njgs + (Tdev / Tnom - 1) * ktnjgs;
+					rnjgs_t_2 = rnjgs + (Tdev / Tnom - 1) * ktrnjgs;
+					t0_2 = (V(gi_2, si_2) - vbis_t_2) / (njgs_t_2 * `KboQ * Tnom);
+					t3_2 = igsdio * exp(ktgs * (Tdev / Tnom - 1));
+					Igs_2 = w * l * nf * abs(t3_2) * (lexp(t0_2) - 1.0);
+					mvgs_2 = hypmax(-V(gi_2, si_2), 0.0, 0.001);
+					efield_2 = mvgs_2 / tbar;
+					t0_2 = sqrt(mvgs_2) + ebreaks;
+					t1_2 = t0_2 / (rnjgs_t_2 * `KboQ * Tnom);
+					rigsdio_t_2 = rigsdio * exp(rktgs * (Tdev / Tnom - 1));
+					Igs_2 = Igs_2 * (1.0 + efield_2 * rigsdio_t_2 * lexp(t1_2));
+					vbid_t_2 = vbid + (Tdev / Tnom - 1) * ktvbid;
+					njgd_t_2 = njgd + (Tdev / Tnom - 1) * ktnjgd;
+					rnjgd_t_2 = rnjgd + (Tdev / Tnom - 1) * ktrnjgd;
+					t0_2 = (V(gi_2, di_2) - vbid_t_2) / (njgd_t_2 * `KboQ * Tnom);
+					t3_2 = igddio * exp(ktgd * (Tdev / Tnom - 1));
+					Igd_2 = w * l * nf * abs(t3_2) * (lexp(t0_2) - 1.0);
+					mvgd_2 = hypmax(-V(gi_2, di_2), 0.0, 0.001);
+					efield_2 = mvgd_2 / tbar;
+					t0_2 = sqrt(mvgd_2) + ebreakd;
+					t0_2 = t0_2 / (rnjgd_t_2 * `KboQ * Tnom);
+					rigddio_t_2 = rigddio * exp(rktgd * (Tdev / Tnom - 1));
+					Igd_2 = Igd_2 * (1.0 + efield_2 * rigddio_t_2 * lexp(t0_2));
                 end
+				
                 3: begin
-                    vbis_t = vbis + (Tdev/Tnom-1)*ktvbis;
-                    njgs_t = njgs + (Tdev/Tnom-1)*ktnjgs;
-                    rnjgs_t = rnjgs + (Tdev/Tnom-1)*ktrnjgs;
-                    rigsdio_t = rigsdio*exp(rktgs*(Tdev/Tnom-1));
-                    t3 = w*l*nf*igsdio*exp(ktgs*(Tdev/Tnom-1));
-                    `IDIO3(t3,njgs_t,ags,V(gi,si),vbis_t,rnjgs_t,ebreaks,rigsdio_t,  Igs)
-                    vbid_t = vbid + (Tdev/Tnom-1)*ktvbid;
-                    njgd_t = njgd + (Tdev/Tnom-1)*ktnjgd;
-                    rnjgd_t = rnjgd + (Tdev/Tnom-1)*ktrnjgd;
-                    rigddio_t = rigddio*exp(rktgd*(Tdev/Tnom-1));
-                    t3 = w*l*nf*igddio*exp(ktgd*(Tdev/Tnom-1));
-                    `IDIO3(t3,njgd_t,agd,V(gi,di),vbid_t,rnjgd_t,ebreakd,rigddio_t,  Igd)
+				
+					 // MOSFET 1
+					vbis_t_1 = vbis + (Tdev / Tnom - 1) * ktvbis;
+					njgs_t_1 = njgs + (Tdev / Tnom - 1) * ktnjgs;
+					rnjgs_t_1 = rnjgs + (Tdev / Tnom - 1) * ktrnjgs;
+					rigsdio_t_1 = rigsdio * exp(rktgs * (Tdev / Tnom - 1));
+					t3_1 = w * l * nf * igsdio * exp(ktgs * (Tdev / Tnom - 1));
+					`IDIO3(t3_1, njgs_t_1, ags, V(gi_1, si_1), vbis_t_1, rnjgs_t_1, ebreaks, rigsdio_t_1, Igs_1)
+
+					vbid_t_1 = vbid + (Tdev / Tnom - 1) * ktvbid;
+					njgd_t_1 = njgd + (Tdev / Tnom - 1) * ktnjgd;
+					rnjgd_t_1 = rnjgd + (Tdev / Tnom - 1) * ktrnjgd;
+					rigddio_t_1 = rigddio * exp(rktgd * (Tdev / Tnom - 1));
+					t3_1 = w * l * nf * igddio * exp(ktgd * (Tdev / Tnom - 1));
+					`IDIO3(t3_1, njgd_t_1, agd, V(gi_1, di_1), vbid_t_1, rnjgd_t_1, ebreakd, rigddio_t_1, Igd_1);
+
+					// MOSFET 2
+					vbis_t_2 = vbis + (Tdev / Tnom - 1) * ktvbis;
+					njgs_t_2 = njgs + (Tdev / Tnom - 1) * ktnjgs;
+					rnjgs_t_2 = rnjgs + (Tdev / Tnom - 1) * ktrnjgs;
+					rigsdio_t_2 = rigsdio * exp(rktgs * (Tdev / Tnom - 1));
+					t3_2 = w * l * nf * igsdio * exp(ktgs * (Tdev / Tnom - 1));
+					`IDIO3(t3_2, njgs_t_2, ags, V(gi_2, si_2), vbis_t_2, rnjgs_t_2, ebreaks, rigsdio_t_2, Igs_2);
+
+					vbid_t_2 = vbid + (Tdev / Tnom - 1) * ktvbid;
+					njgd_t_2 = njgd + (Tdev / Tnom - 1) * ktnjgd;
+					rnjgd_t_2 = rnjgd + (Tdev / Tnom - 1) * ktrnjgd;
+					rigddio_t_2 = rigddio * exp(rktgd * (Tdev / Tnom - 1));
+					t3_2 = w * l * nf * igddio * exp(ktgd * (Tdev / Tnom - 1));
+					`IDIO3(t3_2, njgd_t_2, agd, V(gi_2, di_2), vbid_t_2, rnjgd_t_2, ebreakd, rigddio_t_2, Igd_2);
                 end
             endcase
-            I(gi,si) <+ mult_i*Igs;
-            I(gi,di) <+ mult_i*Igd;
+            I(gi_1,si_1) <+ mult_i1*Igs_1;    //Hars
+			I(gi_2,si_2) <+ mult_i2*Igs_2;    //Hars
+            I(gi_2,di) <+ mult_i2*Igd_2;      //Hars
+			I(gi_1,di) <+ mult_i1*Igd_1;      //Hars
 ////////// Access Region Non-linear Resistance Model //////////
             ars_chk = $param_given(ars);
             ard_chk = $param_given(ard);
             vgopacc = vgop;
+			
+			// Sourrce resistance calculation    //Hars
             if (rdsmod_i == 1) begin
-                ns0_t = ns0accs*(1.0 - kns0*(Tdev/Tnom-1.0)) -ns0sdlag - ns0sglag + (ksub/`P_Q)*Vbs*Cepi;
-                ns0_t = hypmax(ns0_t, 1.0, 1.0e-3);
-                qsacc = `P_Q*ns0_t*(1.0 + k0accs*vgopacc);
-                vsataccs_t = vsataccs*pow((Tdev/Tnom),ats); //Vsat Temperature Dependence
-                isatacc = w*nf*qsacc*vsataccs_t;
-                u0accs_t = u0accs*pow((Tdev/Tnom),utes);    //Mobility Temperature Dependence
-                rs0 = lsg/(w*nf*qsacc*u0accs_t);
-                if (ars_chk!=0) begin
-                    `isat(Ids,isatacc,ars, idseff)
-                    t2 = 1.0 - (idseff/isatacc);
-                end else begin
-                    cr  = abs(Ids/isatacc);
-                    crm = smoothmax(cr,0.9,0.1);
-                    t0 = pow(crm,mexpaccs);
-                    t1 = 1.0 - t0;
-                    t2 = pow(t1,1.0/mexpaccs);
-                end
-                rsbias = rs0;
-                rsbias = rs0/t2;
-                rsc_t = rsc*(1.0+krsc*(Tdev/Tnom-1.0));
-                Rsource = rsc_t/(w*nf) + rsbias + rs_cap;
-                ns0_t = ns0accd*(1.0 - kns0*(Tdev/Tnom-1.0)) -ns0ddlag - ns0dglag + (ksub/`P_Q)*Vbs*Cepi;
-                ns0_t = hypmax(ns0_t, 1.0, 1.0e-3);
-                qsacc = `P_Q*ns0_t*(1.0 + k0accd*vgopacc);
-                isatacc = w*nf*qsacc*vsataccs_t;
-                u0accd_t = u0accd*pow((Tdev/Tnom),uted);    //Mobility Temperature Dependence
-                rd0 = ldg/(w*nf*qsacc*u0accd_t);
-                if (ard_chk!=0) begin
-                    `isat(Ids,isatacc,ard, idseff)
-                    t2 = 1.0 - (idseff/isatacc);
-                end else begin
-                    cr  = abs(Ids/isatacc);
-                    crm = smoothmax(cr,0.9,0.1);
-                    t0 = pow(crm,mexpaccd);
-                    t1 = 1.0 - t0;
-                    t2 = pow(t1,1.0/mexpaccd);
-                end
-                rdbias = rd0/t2;
-                rdc_t = rdc*(1.0+krdc*(Tdev/Tnom-1.0));
-                Rdrain = rdc_t/(w*nf) + rdbias + Rtrap_t + ron_trap + rd_cap;
-                gdpr = 1.0 / Rdrain;
-                gspr = 1.0 / Rsource;
-                if (fastfpmod == 0) begin
-                    I(d, `IntrinsicDrain_fp4) <+ mult_i*gdpr*V(d, `IntrinsicDrain_fp4);
-                    I(`IntrinsicSource_fp4s,s) <+ mult_i*gspr*V(`IntrinsicSource_fp4s,s);
-                end else begin
-                    I(d, di) <+ mult_i*gdpr*V(d, di);
-                    I(si,s) <+  mult_i*gspr*V(si,s);
-                end
-            end else begin
-                if (fastfpmod == 1) begin
-                    V(d, `IntrinsicDrain_fp4) <+ 0.0;
-                    V(s,`IntrinsicSource_fp4s) <+ 0.0;
-                end else begin
-                    V(d,di) <+ 0.0;
-                    V(si,s) <+ 0.0;
-                end
-            end
+				ns0_t_1 = ns0accs*(1.0 - kns0*(Tdev/Tnom-1.0)) - ns0sdlag - ns0sglag + (ksub/`P_Q)*Vbs*Cepi;
+				ns0_t_1 = hypmax(ns0_t_1, 1.0, 1.0e-3);
+				qsacc_1 = `P_Q * ns0_t_1 * (1.0 + k0accs * vgopacc);
+				vsataccs_t = vsataccs * pow((Tdev / Tnom), ats); // Vsat Temperature Dependence
+				isatacc_1 = w * nf * qsacc_1 * vsataccs_t;
+				u0accs_t = u0accs * pow((Tdev / Tnom), utes);    // Mobility Temperature Dependence
+				rs0_1 = lsg / (w * nf * qsacc_1 * u0accs_t);
+
+				if (ars_chk != 0) begin
+					`isat(Ids_1, isatacc_1, ars, idseff_1)
+					t2_1 = 1.0 - (idseff_1 / isatacc_1);
+				end else begin
+					cr_1  = abs(Ids_1 / isatacc_1);
+					crm_1 = smoothmax(cr_1, 0.9, 0.1);
+					t0_1 = pow(crm_1, mexpaccs);
+					t1_1 = 1.0 - t0_1;
+					t2_1 = pow(t1_1, 1.0 / mexpaccs);
+				end
+				rsbias_1 = rs0_1 / t2_1;
+				rsc_t = rsc * (1.0 + krsc * (Tdev / Tnom - 1.0));
+				Rsource_1 = rsc_t / (w * nf) + rsbias_1 + rs_cap;
+
+				// --- Drain Resistance Calculation ---
+				ns0_t_1 = ns0accd*(1.0 - kns0*(Tdev/Tnom-1.0)) - ns0ddlag - ns0dglag + (ksub/`P_Q)*Vbs*Cepi;
+				ns0_t_1 = hypmax(ns0_t_1, 1.0, 1.0e-3);
+				qsacc_1 = `P_Q * ns0_t_1 * (1.0 + k0accd * vgopacc);
+				isatacc_1 = w * nf * qsacc_1 * vsataccs_t;
+				u0accd_t = u0accd * pow((Tdev / Tnom), uted);
+				rd0_1 = ldg / (w * nf * qsacc_1 * u0accd_t);
+
+				if (ard_chk != 0) begin
+					`isat(Ids_1, isatacc_1, ard, idseff_1)
+					t2_1 = 1.0 - (idseff_1 / isatacc_1);
+				end else begin
+					cr_1  = abs(Ids_1 / isatacc_1);
+					crm_1 = smoothmax(cr_1, 0.9, 0.1);
+					t0_1 = pow(crm_1, mexpaccd);
+					t1_1 = 1.0 - t0_1;
+					t2_1 = pow(t1_1, 1.0 / mexpaccd);
+				end
+				rdbias_1 = rd0_1 / t2_1;
+				rdc_t = rdc * (1.0 + krdc * (Tdev / Tnom - 1.0));
+				Rdrain_1 = rdc_t / (w * nf) + rdbias_1 + Rtrap_t + ron_trap + rd_cap;
+
+				gdpr_1 = 1.0 / Rdrain_1;
+				gspr_1 = 1.0 / Rsource_1;
+
+				if (fastfpmod == 0) begin
+					I(d_1, `IntrinsicDrain_fp4) <+ mult_i * gdpr_1 * V(d_1, `IntrinsicDrain_fp4);
+					I(`IntrinsicSource_fp4s, s_1) <+ mult_i * gspr_1 * V(`IntrinsicSource_fp4s, s_1);
+				end else begin
+					I(d_1, di_1) <+ mult_i * gdpr_1 * V(d_1, di_1);
+					I(si_1, s_1) <+ mult_i * gspr_1 * V(si_1, s_1);
+				end
+
+				// --- MOSFET 2 ---
+				ns0_t_2 = ns0accs*(1.0 - kns0*(Tdev/Tnom-1.0)) - ns0sdlag - ns0sglag + (ksub/`P_Q)*Vbs*Cepi;
+				ns0_t_2 = hypmax(ns0_t_2, 1.0, 1.0e-3);
+				qsacc_2 = `P_Q * ns0_t_2 * (1.0 + k0accs * vgopacc);
+				isatacc_2 = w * nf * qsacc_2 * vsataccs_t;
+				rs0_2 = lsg / (w * nf * qsacc_2 * u0accs_t);
+
+				if (ars_chk != 0) begin
+					`isat(Ids_2, isatacc_2, ars, idseff_2)
+					t2_2 = 1.0 - (idseff_2 / isatacc_2);
+				end else begin
+					cr_2  = abs(Ids_2 / isatacc_2);
+					crm_2 = smoothmax(cr_2, 0.9, 0.1);
+					t0_2 = pow(crm_2, mexpaccs);
+					t1_2 = 1.0 - t0_2;
+					t2_2 = pow(t1_2, 1.0 / mexpaccs);
+				end
+				rsbias_2 = rs0_2 / t2_2;
+				Rsource_2 = rsc_t / (w * nf) + rsbias_2 + rs_cap;
+
+				ns0_t_2 = ns0accd*(1.0 - kns0*(Tdev/Tnom-1.0)) - ns0ddlag - ns0dglag + (ksub/`P_Q)*Vbs*Cepi;
+				ns0_t_2 = hypmax(ns0_t_2, 1.0, 1.0e-3);
+				qsacc_2 = `P_Q * ns0_t_2 * (1.0 + k0accd * vgopacc);
+				isatacc_2 = w * nf * qsacc_2 * vsataccs_t;
+				rd0_2 = ldg / (w * nf * qsacc_2 * u0accd_t);
+
+				if (ard_chk != 0) begin
+					`isat(Ids_2, isatacc_2, ard, idseff_2)
+					t2_2 = 1.0 - (idseff_2 / isatacc_2);
+				end else begin
+					cr_2  = abs(Ids_2 / isatacc_2);
+					crm_2 = smoothmax(cr_2, 0.9, 0.1);
+					t0_2 = pow(crm_2, mexpaccd);
+					t1_2 = 1.0 - t0_2;
+					t2_2 = pow(t1_2, 1.0 / mexpaccd);
+				end
+				rdbias_2 = rd0_2 / t2_2;
+				Rdrain_2 = rdc_t / (w * nf) + rdbias_2 + Rtrap_t + ron_trap + rd_cap;
+
+				gdpr_2 = 1.0 / Rdrain_2;
+				gspr_2 = 1.0 / Rsource_2;
+
+				if (fastfpmod == 0) begin
+					I(d_2, `IntrinsicDrain_fp4) <+ mult_i * gdpr_2 * V(d_2, `IntrinsicDrain_fp4);
+					I(`IntrinsicSource_fp4s, s_2) <+ mult_i * gspr_2 * V(`IntrinsicSource_fp4s, s_2);
+				end else begin
+					I(d_2, di_2) <+ mult_i * gdpr_2 * V(d_2, di_2);
+					I(si_2, s_2) <+ mult_i * gspr_2 * V(si_2, s_2);
+				end
+
+			end else begin
+				if (fastfpmod == 1) begin
+					V(d_1, `IntrinsicDrain_fp4) <+ 0.0;
+					V(s_1, `IntrinsicSource_fp4s) <+ 0.0;
+					V(d_2, `IntrinsicDrain_fp4) <+ 0.0;
+					V(s_2, `IntrinsicSource_fp4s) <+ 0.0;
+				end else begin
+					V(d_1, di_1) <+ 0.0;
+					V(si_1, s_1) <+ 0.0;
+					V(d_2, di_2) <+ 0.0;
+					V(si_2, s_2) <+ 0.0;
+				end
+			end
 //////////  Noise Modeling  //////////
 
 ////////// Thermal Noise Model //////////
